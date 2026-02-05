@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 st.set_page_config(page_title="Sistema V16 (Secure)", layout="wide", page_icon="🔐")
 
 # --- SENHA DE ACESSO (MODIFIQUE AQUI) ---
-SENHA_ACESSO = "engenharia123" 
+SENHA_ACESSO = "60##0@7##70@Vna" 
 
 # --- 2. PARÂMETROS ---
 METAS_GASTOS = {
@@ -270,16 +270,48 @@ def pagina_lancar_investimento():
 
 def pagina_lancar_lote():
     st.header("📝 Lançamento em Lote")
-    tipo = st.selectbox("Pacote", ["Custos Fixos", "Assinaturas"])
+    st.info("Lance suas contas fixas ou assinaturas de uma vez só.")
+    
+    # --- NOVIDADE: AGORA VOCÊ ESCOLHE A DATA ---
+    c1, c2 = st.columns(2)
+    tipo = c1.selectbox("Selecione o Pacote", ["Custos Fixos", "Assinaturas"])
+    
+    # Lógica inteligente: Se hoje for dia > 20, já sugere o mês que vem
+    hoje = date.today()
+    data_sugerida = hoje
+    if hoje.day > 20:
+        # Pula para o próximo mês (aproximado)
+        data_sugerida = hoje + timedelta(days=15)
+        
+    data_ref = c2.date_input("Data de Referência (Vencimento)", data_sugerida)
+    # -------------------------------------------
+
+    # Carrega a lista pré-definida
     df_base = pd.DataFrame(PRESET_FIXOS if tipo == "Custos Fixos" else PRESET_ASSINATURAS)
+    
+    st.caption(f"Confira os valores abaixo para o mês de **{data_ref.strftime('%B/%Y')}**:")
+    
+    # Permite editar antes de enviar (Se a Netflix aumentou, você muda aqui)
     editado = st.data_editor(df_base, num_rows="dynamic", use_container_width=True)
-    if st.button("🚀 Lançar Tudo"):
+    
+    if st.button("🚀 Lançar Tudo na Planilha"):
         rows = []
-        comp = date.today().strftime("%Y-%m")
+        # Pega o mês da data que VOCÊ escolheu, não mais o dia de hoje fixo
+        comp = data_ref.strftime("%Y-%m")
+        
         for _, r in editado.iterrows():
-            rows.append([str(date.today()), comp, r['Categoria'], r['Estabelecimento'], r['Descricao'], float(r['Valor']), 1, 1, r.get('Tipo', 'Gasto')])
+            rows.append([
+                str(data_ref),  # Data do lançamento
+                comp,           # Mês de Competência (Ex: 2026-03)
+                r['Categoria'], 
+                r['Estabelecimento'], 
+                r['Descricao'], 
+                float(r['Valor']), 
+                1, 1, 
+                r.get('Tipo', 'Gasto')
+            ])
         sheet.append_rows(rows)
-        st.success("Sucesso!")
+        st.success(f"✅ Lote de {tipo} lançado para **{comp}** com sucesso!")
         st.cache_data.clear()
 
 def pagina_lancar_receita():
