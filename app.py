@@ -1,71 +1,110 @@
 import streamlit as st
 import pandas as pd
 import gspread
-import plotly.express as px
+import textwrap
 import os
 from datetime import date, datetime, timedelta
 
 # --- 1. CONFIGURAÇÃO GERAL ---
-st.set_page_config(page_title="Sistema V16 (Secure)", layout="wide", page_icon="🔐")
+st.set_page_config(page_title="Sistema V24.1 (Secure)", layout="centered", page_icon="🔐")
 
-# --- SENHA DE ACESSO (MODIFIQUE AQUI) ---
-SENHA_ACESSO = "60##0@7##70@Vna" 
+# --- SENHA DE ACESSO (MIGRADA DO V16) ---
+SENHA_ACESSO = "60##0@7##70@Vna"
 
-# --- 2. PARÂMETROS ---
-METAS_GASTOS = {
-    "Nubank": 2500.00,
-    "Itaú": 1000.00,
-    "Inter": 800.00,
-    "C6": 500.00,
-    "Custos Fixos": 2000.00
+# --- CSS (CORREÇÃO DE CORES E ESTILO) ---
+st.markdown("""
+    <style>
+    .stApp {background-color: #FAFAFA;}
+    .block-container {padding-top: 1rem; padding-bottom: 8rem;}
+    
+    /* Texto Preto nos Inputs */
+    div[role="radiogroup"] label p, div[data-baseweb="select"] span, 
+    .stSelectbox label p, .stDateInput label p, .stTextInput label p, .stNumberInput label p {
+        color: #333333 !important;
+        font-weight: bold !important;
+    }
+
+    /* Botões de Navegação */
+    div[data-testid="stHorizontalBlock"] > div > button {
+        border-radius: 12px; height: 3.5em; border: none;
+        background-color: white; box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+        color: #555; font-weight: 600;
+    }
+    div[data-testid="stHorizontalBlock"] > div > button:hover {
+        color: #FF7F00; background-color: #FFF3E0;
+    }
+    div[data-testid="stHorizontalBlock"] > div > button:focus {
+        color: #FF7F00 !important; border-bottom: 2px solid #FF7F00;
+    }
+    
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 2. CONFIGURAÇÕES (MIGRADAS E ADAPTADAS) ---
+
+# Mapeamento: Chave na Planilha -> Visual no App
+CONFIG_CONTAS = {
+    "Nubank":       {"Icon": "💜", "Cor": "#F5E6FA", "Nome": "Nubank"},
+    "Itaú":         {"Icon": "🟧", "Cor": "#FFF0E6", "Nome": "Itaú"},
+    "Inter":        {"Icon": "🧡", "Cor": "#FFF5E6", "Nome": "Inter"},
+    "C6":           {"Icon": "🖤", "Cor": "#F0F0F0", "Nome": "C6 Bank"},
+    "Porto Seguro": {"Icon": "🔵", "Cor": "#E3F2FD", "Nome": "Porto Seguro"}, # Mantido V16/V24
+    "Custos Fixos": {"Icon": "💼", "Cor": "#ECEFF1", "Nome": "Empresa"},      # Mantido V16
 }
 
-META_INVESTIMENTO_MENSAL = 2000.00 
+CONFIG_NATUREZA = {
+    "Alimentação":  {"Icon": "🥗", "Cor": "#E8F5E9", "Nome": "Alimentação"}, 
+    "Transporte":   {"Icon": "⛽", "Cor": "#E1F5FE", "Nome": "Transporte"},
+    "Lazer":        {"Icon": "🎉", "Cor": "#FFF8E1", "Nome": "Lazer"},
+    "Moradia":      {"Icon": "🏠", "Cor": "#FCE4EC", "Nome": "Moradia"},
+    "Educação":     {"Icon": "📚", "Cor": "#F3E5F5", "Nome": "Educação"},
+    "Saúde":        {"Icon": "💊", "Cor": "#E0F2F1", "Nome": "Saúde"},
+    "Outro":        {"Icon": "💸", "Cor": "#EEEEEE", "Nome": "Outros"},
+}
+
+# METAS (Vindas do seu código V16)
+METAS = {
+    "Nubank": 2500.00, 
+    "Itaú": 1000.00, 
+    "Inter": 800.00, 
+    "C6": 500.00, 
+    "Porto Seguro": 1500.00, # Adicionado
+    "Custos Fixos": 2000.00, 
+    # Metas de Natureza (Mantidas da V24 pois V16 não tinha separação clara)
+    "Alimentação": 1200.00, "Transporte": 600.00, "Lazer": 400.00
+}
+
+# DIAS DE VENCIMENTO (V16)
 DIAS_VENCIMENTO = {"Nubank": 26, "Itaú": 6, "Inter": 7, "C6": 2, "Porto Seguro": 5}
 
-# MAPA DE INTELIGÊNCIA (PALAVRA CHAVE -> PREENCHIMENTO AUTOMÁTICO)
-MAPA_AUTO = {
-    "uber": {"Cat": "Nubank", "Estab": "Uber"},
-    "ifood": {"Cat": "Nubank", "Estab": "Ifood"},
-    "posto": {"Cat": "Itaú", "Estab": "Posto Ipiranga"},
-    "shell": {"Cat": "Itaú", "Estab": "Posto Shell"},
-    "amazon": {"Cat": "Inter", "Estab": "Amazon"},
-    "netflix": {"Cat": "Nubank", "Estab": "Netflix"},
-    "spotify": {"Cat": "Nubank", "Estab": "Spotify"},
-    "das": {"Cat": "Custos Fixos", "Estab": "Governo"},
-}
-
+# PRESETS DE LANÇAMENTO (V16)
 PRESET_FIXOS = [
-    {"Categoria": "Custos Fixos", "Estabelecimento": "Governo", "Descricao": "DAS (Imposto)", "Valor": 432.00, "Tipo": "Gasto"},
-    {"Categoria": "Custos Fixos", "Estabelecimento": "Contabilidade", "Descricao": "Contador", "Valor": 300.00, "Tipo": "Gasto"},
-    {"Categoria": "Custos Fixos", "Estabelecimento": "Próprio", "Descricao": "Pro-labore", "Valor": 166.98, "Tipo": "Gasto"},
+    {"Categoria": "Custos Fixos", "Estabelecimento": "Governo", "Descricao": "DAS (Imposto)", "Valor": 432.00},
+    {"Categoria": "Custos Fixos", "Estabelecimento": "Contabilidade", "Descricao": "Contador", "Valor": 300.00},
+    {"Categoria": "Custos Fixos", "Estabelecimento": "Próprio", "Descricao": "Pro-labore", "Valor": 166.98},
 ]
 
 PRESET_ASSINATURAS = [
-    {"Categoria": "Nubank", "Estabelecimento": "Unimed", "Descricao": "Plano de Saúde", "Valor": 158.38, "Tipo": "Gasto"},
-    {"Categoria": "Nubank", "Estabelecimento": "Netflix", "Descricao": "Netflix", "Valor": 55.90, "Tipo": "Gasto"},
-    {"Categoria": "Nubank", "Estabelecimento": "Google", "Descricao": "Youtube Premium", "Valor": 16.90, "Tipo": "Gasto"},
-    {"Categoria": "Nubank", "Estabelecimento": "Vida", "Descricao": "Seguro", "Valor": 28.72, "Tipo": "Gasto"},
+    {"Categoria": "Nubank", "Estabelecimento": "Saúde", "Descricao": "Unimed", "Valor": 158.38},
+    {"Categoria": "Nubank", "Estabelecimento": "Lazer", "Descricao": "Netflix", "Valor": 55.90},
+    {"Categoria": "Nubank", "Estabelecimento": "Lazer", "Descricao": "Youtube Premium", "Valor": 16.90},
+    {"Categoria": "Nubank", "Estabelecimento": "Seguros", "Descricao": "Seguro Vida", "Valor": 28.72},
 ]
 
-# --- 3. CONEXÃO E LOGIN ---
+# --- 3. BACKEND ---
 def check_password():
-    """Retorna True se a senha estiver correta"""
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
-
-    if st.session_state.password_correct:
-        return True
-
-    # Tela de Login
-    st.title("🔒 Acesso Restrito")
-    senha = st.text_input("Digite a senha de acesso:", type="password")
-    if st.button("Entrar"):
-        if senha == SENHA_ACESSO:
-            st.session_state.password_correct = True
-            st.rerun()
-        else:
-            st.error("Senha incorreta.")
+    if "password_correct" not in st.session_state: st.session_state.password_correct = False
+    if st.session_state.password_correct: return True
+    st.markdown("<br><h3 style='text-align: center;'>🔒 Sistema Seguro V24.1</h3>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        senha = st.text_input("Senha", type="password", label_visibility="collapsed")
+        if st.button("Entrar", type="primary", use_container_width=True):
+            if senha == SENHA_ACESSO:
+                st.session_state.password_correct = True
+                st.rerun()
+            else: st.error("Senha incorreta.")
     return False
 
 @st.cache_resource
@@ -75,13 +114,9 @@ def conectar_gsheets():
             gc = gspread.service_account(filename="credentials.json")
         elif "gcp_service_account" in st.secrets:
             gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
-        else:
-            st.error("❌ ERRO: Arquivo 'credentials.json' não encontrado.")
-            st.stop()
+        else: return None
         return gc.open("Financas_Master").sheet1
-    except Exception as e:
-        st.error(f"Erro Conexão: {e}")
-        st.stop()
+    except: return None
 
 def tratar_valores_br(valor):
     if isinstance(valor, str):
@@ -91,258 +126,277 @@ def tratar_valores_br(valor):
         except: return 0.0
     return float(valor)
 
-# BLOQUEIO DE SEGURANÇA
-if not check_password():
-    st.stop()
-
-# Se passou da senha, carrega o resto
+if not check_password(): st.stop()
 sheet = conectar_gsheets()
 
-# --- 4. FUNÇÕES VISUAIS ---
-def plot_ranking_bancos(df):
-    if df.empty: return
-    df_rank = df.groupby("Categoria")["Valor"].sum().reset_index().sort_values("Valor", ascending=True)
-    fig = px.bar(df_rank, x="Valor", y="Categoria", orientation='h', text="Valor", 
-                 title="🏆 Ranking de Gastos", color="Valor", color_continuous_scale="Reds")
-    fig.update_traces(texttemplate='R$ %{text:,.2f}')
-    fig.update_layout(yaxis_title=None, xaxis_title=None, coloraxis_showscale=False, height=350)
-    st.plotly_chart(fig, use_container_width=True)
-
-def plot_carteira_invest(df):
-    if df.empty: 
-        st.info("Nenhum investimento registrado.")
-        return
-    df_rank = df.groupby("Descricao")["Valor"].sum().reset_index()
-    fig = px.pie(df_rank, values='Valor', names='Descricao', title="Carteira do Mês", hole=0.4)
-    st.plotly_chart(fig, use_container_width=True)
-
-def plot_evolucao_anual(df):
-    # Agrupa por Competência e Tipo
-    if df.empty: return
-    df_evo = df.groupby(["Competencia", "Tipo"])["Valor"].sum().reset_index()
-    fig = px.line(df_evo, x="Competencia", y="Valor", color="Tipo", markers=True, 
-                  title="📈 Evolução Anual: Gasto vs Investimento vs Receita")
-    st.plotly_chart(fig, use_container_width=True)
-
-# --- 5. PÁGINAS ---
-
-def pagina_dashboard():
-    st.title("📊 Painel Financeiro")
-    
-    dados = sheet.get_all_records()
-    df = pd.DataFrame(dados)
-    if df.empty: st.warning("Sem dados."); return
-
-    for col in ['Valor', 'Parcela_Atual', 'Total_Parcelas']:
-        if col in df.columns: df[col] = df[col].apply(tratar_valores_br)
-
-    # Alertas
-    hoje = date.today().day
-    with st.container():
-        for c, d in DIAS_VENCIMENTO.items():
-            if 0 <= d - hoje <= 5: st.error(f"⚠️ Fatura **{c}** vence dia {d}!")
-
-    # Filtros
-    meses = sorted(df['Competencia'].astype(str).unique(), reverse=True)
-    mes_atual = st.sidebar.selectbox("📅 Mês de Referência", meses)
-    
-    df_mes = df[df['Competencia'] == mes_atual]
-    df_rec = df_mes[df_mes['Categoria'] == 'Receita']
-    
-    if 'Tipo' in df_mes.columns:
-        df_invest = df_mes[df_mes['Tipo'] == 'Investimento']
-        df_gastos = df_mes[(df_mes['Tipo'] == 'Gasto') & (df_mes['Categoria'] != 'Receita')]
-    else:
-        df_invest = pd.DataFrame(); df_gastos = df_mes[df_mes['Categoria'] != 'Receita']
-
-    # KPIs
-    total_rec = df_rec['Valor'].sum()
-    total_gasto = df_gastos['Valor'].sum()
-    total_invest = df_invest['Valor'].sum()
-    saldo = total_rec - total_gasto - total_invest
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Entradas", f"R$ {total_rec:,.2f}")
-    k2.metric("Despesas", f"R$ {total_gasto:,.2f}", delta=-total_gasto)
-    k3.metric("Aportes", f"R$ {total_invest:,.2f}", delta=f"Meta: {(total_invest/META_INVESTIMENTO_MENSAL)*100:.0f}%")
-    k4.metric("Sobra de Caixa", f"R$ {saldo:,.2f}", delta_color="normal" if saldo > 0 else "inverse")
-
+# --- 4. COMPONENTES VISUAIS ---
+def render_navbar():
     st.markdown("---")
-    
-    # NOVAS ABAS
-    t1, t2, t3, t4 = st.tabs(["📉 Análise Mensal", "📈 Investimentos", "🎯 Metas", "📅 Visão Anual"])
-    
-    with t1:
-        c1, c2 = st.columns([2, 1])
-        with c1: plot_ranking_bancos(df_gastos)
-        with c2: 
-            st.subheader("Top Despesas")
-            if not df_gastos.empty: st.dataframe(df_gastos.groupby("Estabelecimento")["Valor"].sum().sort_values(ascending=False).head(5))
-    with t2:
-        c1, c2 = st.columns([1, 1])
-        with c1: plot_carteira_invest(df_invest)
-        with c2: st.dataframe(df_invest[['Data', 'Descricao', 'Valor']], use_container_width=True, hide_index=True)
-    with t3:
-        st.subheader("Budget vs Realizado")
-        cols = st.columns(3)
-        i = 0
-        gastos_cat = df_gastos.groupby("Categoria")["Valor"].sum()
-        for cat, meta in METAS_GASTOS.items():
-            val = gastos_cat.get(cat, 0)
-            pct = val/meta if meta > 0 else 0
-            cor = "red" if pct > 1 else "green"
-            with cols[i%3]:
-                st.write(f"**{cat}**")
-                st.progress(min(pct, 1.0))
-                st.caption(f":{cor}[{pct*100:.0f}% de R$ {meta}]")
-            i+=1
-    with t4: # NOVA ABA DE VISÃO ANUAL
-        st.subheader("Histórico do Ano")
-        plot_evolucao_anual(df) # Passa o dataframe completo, não só o do mês
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        if st.button("💳 Home", use_container_width=True):
+            st.session_state['aba_atual'] = 'Principal'; st.rerun()
+    with c2:
+        if st.button("📊 Analítico", use_container_width=True):
+            st.session_state['aba_atual'] = 'Analitico'; st.rerun()
+    with c3:
+        if st.button("💡 Dicas", use_container_width=True):
+            st.session_state['aba_atual'] = 'Sugestao'; st.rerun()
+    with c4:
+        if st.button("📝 Editor", use_container_width=True):
+            st.session_state['aba_atual'] = 'Editor'; st.rerun()
 
-def pagina_lancar_despesas():
-    st.header("💳 Lançar Nova Despesa")
+def render_card(titulo, icone, cor_fundo, gasto, limite, grande=False):
+    cor_texto = "#333333"
+    aviso = ""
+    if limite > 0 and gasto > limite: 
+        cor_texto = "#D32F2F"
+        aviso = "⚠️"
     
-    # Campo de busca inteligente
-    search = st.text_input("🔎 Digite para preencher automático (Ex: Uber, Ifood, Amazon):")
+    pct = (gasto / limite * 100) if limite > 0 else 0
+    tamanho_icone = "40px" if grande else "32px"
+    altura_barra = "8px" if grande else "5px"
     
-    # Valores padrão
-    def_cat_idx = 0
-    def_estab = ""
-    
-    # Lógica de Autocomplete
-    if search:
-        for key, val in MAPA_AUTO.items():
-            if key in search.lower():
-                # Encontra o indice da categoria na lista
-                lista_cats = list(METAS_GASTOS.keys()) + ["Outro"]
-                if val["Cat"] in lista_cats:
-                    def_cat_idx = lista_cats.index(val["Cat"])
-                def_estab = val["Estab"]
-                st.toast(f"✨ Autopreenchido: {val['Cat']} - {val['Estab']}", icon="🤖")
-                break
-    
-    with st.form("despesa"):
-        data = st.date_input("Data Compra", date.today())
-        comp_padrao = (data + timedelta(days=15)).strftime("%Y-%m") if data.day > 20 else data.strftime("%Y-%m")
-        
-        c1, c2 = st.columns(2)
-        competencia = c1.text_input("Mês Fatura", value=comp_padrao)
-        cat = c2.selectbox("Cartão/Banco", list(METAS_GASTOS.keys()) + ["Outro"], index=def_cat_idx)
-        
-        estab = st.text_input("Estabelecimento", value=def_estab)
-        desc = st.text_input("Descrição", value=search if search else "")
-        val = st.number_input("Valor (R$)", min_value=0.01)
-        
-        pa, pt = st.columns(2)
-        p_atual = pa.number_input("Parcela Atual", 1)
-        p_total = pt.number_input("Total Parcelas", 1)
-        rep = st.checkbox("Replicar?", True)
-        
-        if st.form_submit_button("💾 Salvar"):
-            qtd = (p_total - p_atual + 1) if rep else 1
-            rows = []
-            try: y, m = map(int, competencia.split('-'))
-            except: st.error("Erro data"); st.stop()
-            for i in range(qtd):
-                mc = m + i
-                yc = y + (mc - 1) // 12
-                mc = (mc - 1) % 12 + 1
-                rows.append([str(data), f"{yc}-{mc:02d}", cat, estab, desc, val, p_atual+i, p_total, "Gasto"])
-            sheet.append_rows(rows)
-            st.success("Lançado!")
-            st.cache_data.clear()
+    html = textwrap.dedent(f"""
+<div class="card-container" style="background-color: white; border-radius: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 15px; border: 1px solid #f0f0f0; overflow: hidden;">
+    <div style="background-color: {cor_fundo}; padding: 15px; text-align: center;">
+        <div style="font-size: {tamanho_icone};">{icone}</div>
+    </div>
+    <div style="padding: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: bold; font-size: 13px; color: #444;">{titulo}</span>
+            <span style="font-size: 12px;">{aviso}</span>
+        </div>
+        <div style="font-size: 10px; color: #888; margin-bottom: 5px;">Meta: {'∞' if limite == 0 else f'R$ {limite:,.0f}'}</div>
+        <div style="font-weight: 800; font-size: 16px; color: {cor_texto};">R$ {gasto:,.2f}</div>
+        <div style="background-color: #eee; height: {altura_barra}; border-radius: 4px; margin-top: 8px; overflow: hidden;">
+            <div style="background-color: {cor_texto if pct > 100 else '#4CAF50'}; width: {min(pct, 100)}%; height: 100%;"></div>
+        </div>
+    </div>
+</div>
+""")
+    st.markdown(html, unsafe_allow_html=True)
 
-def pagina_lancar_investimento():
-    st.header("📈 Lançar Investimento")
-    with st.form("invest"):
-        data = st.date_input("Data", date.today())
-        comp = data.strftime("%Y-%m")
-        c1, c2 = st.columns(2)
-        tipo_ativo = c1.selectbox("Tipo", ["Ações", "FIIs", "Renda Fixa", "Cripto", "Reserva"])
-        corretora = c2.text_input("Corretora", "NuInvest")
-        ativo = st.text_input("Descrição", placeholder="Ex: MXRF11")
-        valor = st.number_input("Valor (R$)", min_value=0.01)
-        if st.form_submit_button("Salvar"):
-            sheet.append_row([str(data), comp, tipo_ativo, corretora, ativo, valor, 1, 1, "Investimento"])
-            st.success("Salvo!")
-            st.cache_data.clear()
+# --- 5. LÓGICA DE DADOS ---
+def get_dados_filtrados():
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        meses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        idx = min(date.today().month - 1, 11)
+        if hasattr(st, "pills"):
+            mes_nome = st.pills("Mês", meses, default=meses[idx], label_visibility="collapsed")
+        else: mes_nome = st.selectbox("Mês", meses, index=idx)
+    with c2:
+        ano = st.selectbox("Ano", list(range(2020, 2031)), index=date.today().year - 2020, label_visibility="collapsed")
 
-def pagina_lancar_lote():
-    st.header("📝 Lançamento em Lote")
-    st.info("Lance suas contas fixas ou assinaturas de uma vez só.")
+    mapa = {m: f"{i+1:02d}" for i, m in enumerate(meses)}
+    comp = f"{ano}-{mapa[mes_nome]}"
     
-    # --- NOVIDADE: AGORA VOCÊ ESCOLHE A DATA ---
+    receita_total = 0
+    gastos_conta = {}
+    gastos_natureza = {}
+    
+    if sheet:
+        df = pd.DataFrame(sheet.get_all_records())
+        if not df.empty:
+            for col in ['Valor']: df[col] = df[col].apply(tratar_valores_br)
+            df_mes = df[df['Competencia'] == comp]
+            
+            receita_total = df_mes[df_mes['Categoria'] == 'Receita']['Valor'].sum()
+            df_gastos = df_mes[(df_mes['Tipo'] == 'Gasto') & (df_mes['Categoria'] != 'Receita')]
+            
+            gastos_conta = df_gastos.groupby("Categoria")["Valor"].sum().to_dict()
+            gastos_natureza = df_gastos.groupby("Estabelecimento")["Valor"].sum().to_dict()
+    
+    return mes_nome, ano, receita_total, gastos_conta, gastos_natureza
+
+# --- 6. TELAS ---
+def aba_principal():
+    mes, ano, receita, gastos_conta, _ = get_dados_filtrados()
+    total_despesas = sum(gastos_conta.values())
+    saldo = receita - total_despesas
+    
+    # 1. ALERTAS DE VENCIMENTO (V16 RESTAURADO)
+    hoje = date.today().day
+    for c, d in DIAS_VENCIMENTO.items():
+        if 0 <= d - hoje <= 5: 
+            st.warning(f"⚠️ Fatura **{c}** vence dia {d}!")
+
+    # 2. PLACAR
+    st.markdown(textwrap.dedent(f"""
+    <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <div style="flex: 1; background: #E8F5E9; padding: 10px; border-radius: 12px; text-align: center; border: 1px solid #C8E6C9;">
+            <p style="margin:0; font-size: 10px; color: #2E7D32; font-weight: bold;">ENTRADAS</p>
+            <h4 style="margin:2px 0 0 0; color: #1B5E20;">R$ {receita:,.2f}</h4>
+        </div>
+        <div style="flex: 1; background: #FFEBEE; padding: 10px; border-radius: 12px; text-align: center; border: 1px solid #FFCDD2;">
+            <p style="margin:0; font-size: 10px; color: #C62828; font-weight: bold;">SAÍDAS</p>
+            <h4 style="margin:2px 0 0 0; color: #B71C1C;">R$ {total_despesas:,.2f}</h4>
+        </div>
+        <div style="flex: 1; background: #E3F2FD; padding: 10px; border-radius: 12px; text-align: center; border: 1px solid #BBDEFB;">
+            <p style="margin:0; font-size: 10px; color: #1565C0; font-weight: bold;">SALDO</p>
+            <h4 style="margin:2px 0 0 0; color: #0D47A1;">R$ {saldo:,.2f}</h4>
+        </div>
+    </div>
+    """), unsafe_allow_html=True)
+
+    if st.button("➕ Novo Lançamento", type="primary", use_container_width=True):
+        st.session_state['tela_lancamento'] = True; st.rerun()
+
+    st.write("")
+    st.markdown("### 💳 Por Conta")
+    
+    cols = st.columns(2)
+    bancos = list(CONFIG_CONTAS.keys())
+    for i, conta in enumerate(bancos):
+        val = gastos_conta.get(conta, 0.0)
+        meta = METAS.get(conta, 0.0)
+        conf = CONFIG_CONTAS.get(conta)
+        with cols[i % 2]:
+            render_card(conf["Nome"], conf["Icon"], conf["Cor"], val, meta)
+
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    render_navbar()
+
+def aba_analitico():
+    st.markdown("### 📊 Por Classificação")
+    mes, ano, _, _, gastos_natureza = get_dados_filtrados()
+    naturezas = list(CONFIG_NATUREZA.keys())
+    naturezas.sort(key=lambda x: gastos_natureza.get(x, 0), reverse=True)
+    
+    cols = st.columns(2)
+    for i, nat in enumerate(naturezas):
+        val = gastos_natureza.get(nat, 0.0)
+        meta = METAS.get(nat, 0.0)
+        conf = CONFIG_NATUREZA.get(nat)
+        with cols[i % 2]:
+            render_card(conf["Nome"], conf["Icon"], conf["Cor"], val, meta)
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    render_navbar()
+
+def aba_sugestoes():
+    st.markdown("### 💡 Consultoria IA")
+    mes, ano, receita, gastos_conta, _ = get_dados_filtrados()
+    total_gasto = sum(gastos_conta.values())
+    saldo = receita - total_gasto
+    import plotly.graph_objects as go
+    if total_gasto > 0 or receita > 0:
+        fig = go.Figure(data=[go.Pie(labels=['Gastos', 'Saldo'], values=[total_gasto, max(0, saldo)], hole=.7, marker_colors=['#EF5350', '#66BB6A'])])
+        fig.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), height=200)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    if saldo < 0: st.error("🚨 Você está no vermelho!")
+    elif saldo > 0: st.success(f"✅ Sobrou R$ {saldo:,.2f}")
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    render_navbar()
+
+def aba_editor():
+    st.markdown("### 📝 Editor & Lotes")
+    
+    # BOTÃO PARA LANÇAMENTO EM LOTE (V16 RESTAURADO)
+    if st.button("🚀 Lançar Lotes (Fixos/Assinaturas)", use_container_width=True):
+        st.session_state['tela_lote'] = True; st.rerun()
+
+    st.info("Edição direta da planilha:")
+    if sheet:
+        df = pd.DataFrame(sheet.get_all_records())
+        editado = st.data_editor(df, num_rows="dynamic", use_container_width=True, height=400)
+        if st.button("💾 Salvar Alterações", type="primary", use_container_width=True):
+            sheet.clear(); sheet.append_row(df.columns.tolist()); sheet.append_rows(editado.astype(str).values.tolist())
+            st.success("✅ Atualizado!"); st.cache_data.clear()
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    render_navbar()
+
+# --- TELA DE LOTE (MIGRADA DO V16) ---
+def tela_lancar_lote():
+    st.markdown("### 📝 Lançar Pacote")
+    if st.button("🔙 Voltar"):
+        st.session_state['tela_lote'] = False; st.rerun()
+        
     c1, c2 = st.columns(2)
     tipo = c1.selectbox("Selecione o Pacote", ["Custos Fixos", "Assinaturas"])
     
-    # Lógica inteligente: Se hoje for dia > 20, já sugere o mês que vem
+    # Inteligencia de data (V16)
     hoje = date.today()
-    data_sugerida = hoje
-    if hoje.day > 20:
-        # Pula para o próximo mês (aproximado)
-        data_sugerida = hoje + timedelta(days=15)
-        
-    data_ref = c2.date_input("Data de Referência (Vencimento)", data_sugerida)
-    # -------------------------------------------
-
-    # Carrega a lista pré-definida
+    data_sug = hoje + timedelta(days=15) if hoje.day > 20 else hoje
+    data_ref = c2.date_input("Vencimento", data_sug)
+    
     df_base = pd.DataFrame(PRESET_FIXOS if tipo == "Custos Fixos" else PRESET_ASSINATURAS)
+    st.caption(f"Competência: **{data_ref.strftime('%B/%Y')}**")
     
-    st.caption(f"Confira os valores abaixo para o mês de **{data_ref.strftime('%B/%Y')}**:")
-    
-    # Permite editar antes de enviar (Se a Netflix aumentou, você muda aqui)
     editado = st.data_editor(df_base, num_rows="dynamic", use_container_width=True)
     
-    if st.button("🚀 Lançar Tudo na Planilha"):
+    if st.button("🚀 Lançar Tudo", type="primary", use_container_width=True):
         rows = []
-        # Pega o mês da data que VOCÊ escolheu, não mais o dia de hoje fixo
         comp = data_ref.strftime("%Y-%m")
-        
         for _, r in editado.iterrows():
-            rows.append([
-                str(data_ref),  # Data do lançamento
-                comp,           # Mês de Competência (Ex: 2026-03)
-                r['Categoria'], 
-                r['Estabelecimento'], 
-                r['Descricao'], 
-                float(r['Valor']), 
-                1, 1, 
-                r.get('Tipo', 'Gasto')
-            ])
+            # Mapeia V16 para V24 (Estabelecimento vira Classificacao)
+            rows.append([str(data_ref), comp, r['Categoria'], r['Estabelecimento'], r['Descricao'], float(r['Valor']), 1, 1, "Gasto"])
         sheet.append_rows(rows)
-        st.success(f"✅ Lote de {tipo} lançado para **{comp}** com sucesso!")
-        st.cache_data.clear()
+        st.success(f"✅ Lote processado para {comp}!"); st.cache_data.clear()
+        
+def tela_lancamento():
+    st.markdown("### 📝 O que vamos registrar?")
+    with st.container(border=True):
+        tipo_op = st.radio("Selecione:", ["Gasto", "Receita", "Investimento"], horizontal=True, label_visibility="collapsed")
 
-def pagina_lancar_receita():
-    st.header("💰 Lançar Receita")
-    with st.form("rec"):
-        val = st.number_input("Valor")
-        desc = st.text_input("Descrição", "Salário")
-        if st.form_submit_button("Salvar"):
-            sheet.append_row([str(date.today()), date.today().strftime("%Y-%m"), "Receita", "Cliente", desc, val, 1, 1, "Receita"])
-            st.success("Salvo!")
-            st.cache_data.clear()
+        if tipo_op == "Gasto": st.error("📉 REGISTRANDO SAÍDA (GASTO)")
+        elif tipo_op == "Receita": st.success("💰 REGISTRANDO ENTRADA (RECEITA)")
+        else: st.info("📈 REGISTRANDO INVESTIMENTO (APORTE)")
 
-def pagina_gestor():
-    st.title("🛠️ Banco de Dados")
-    df = pd.DataFrame(sheet.get_all_records())
-    edit = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-    if st.button("Salvar Alterações"):
-        sheet.clear(); sheet.append_row(edit.columns.tolist()); sheet.append_rows(edit.astype(str).values.tolist())
-        st.success("Salvo!")
+        st.markdown("---")
+        with st.form("form_lanca"):
+            data = st.date_input("Data", date.today())
+            
+            if tipo_op == "Gasto":
+                c1, c2 = st.columns(2)
+                with c1: conta = st.selectbox("💳 Conta", list(CONFIG_CONTAS.keys()))
+                with c2: classificacao = st.selectbox("🏷️ Tipo", list(CONFIG_NATUREZA.keys()) + ["Outro"])
+            else:
+                conta = "Receita" if tipo_op == "Receita" else "Investimento"
+                classificacao = st.selectbox("Detalhe", ["Salário", "Freelance", "Ações", "FIIs", "Renda Fixa"])
 
-# --- MENU ---
-st.sidebar.title("App V16 (Secure)")
-if st.sidebar.button("🔒 Sair / Logout"):
-    st.session_state.password_correct = False
-    st.rerun()
+            desc = st.text_input("Descrição", placeholder="Detalhe...")
+            val = st.number_input("Valor (R$)", min_value=0.01)
+            
+            parcelas = 1
+            if tipo_op == "Gasto":
+                c1, c2 = st.columns(2)
+                pa = c1.number_input("Parcela Atual", 1, value=1)
+                pt = c2.number_input("Total Parcelas", 1, value=1)
+                parcelas = pt - pa + 1
+            
+            if st.form_submit_button("✅ CONFIRMAR", type="primary", use_container_width=True):
+                comp = data.strftime("%Y-%m")
+                if tipo_op == "Gasto" and data.day > 20: comp = (data + timedelta(days=15)).strftime("%Y-%m")
+                
+                rows = []
+                try: y, m = map(int, comp.split('-'))
+                except: st.error("Erro data"); st.stop()
 
-menu = st.sidebar.radio("Navegação", ["Dashboard", "Lançar Despesa", "Lançar Investimento", "Lançar Lotes", "Lançar Receita", "Banco de Dados"])
+                for i in range(parcelas):
+                    mc = m + i
+                    yc = y + (mc - 1) // 12
+                    mc = (mc - 1) % 12 + 1
+                    if tipo_op == "Gasto":
+                        rows.append([str(data), f"{yc}-{mc:02d}", conta, classificacao, desc, val, pa+i, pt, "Gasto"])
+                    elif tipo_op == "Receita": sheet.append_row([str(data), comp, "Receita", "Cliente", desc, val, 1, 1, "Receita"])
+                    elif tipo_op == "Investimento": sheet.append_row([str(data), comp, "Investimento", classificacao, desc, val, 1, 1, "Investimento"])
 
-if menu == "Dashboard": pagina_dashboard()
-elif menu == "Lançar Despesa": pagina_lancar_despesas()
-elif menu == "Lançar Investimento": pagina_lancar_investimento()
-elif menu == "Lançar Lotes": pagina_lancar_lote()
-elif menu == "Lançar Receita": pagina_lancar_receita()
-elif menu == "Banco de Dados": pagina_gestor()
+                if tipo_op == "Gasto": sheet.append_rows(rows)
+                st.toast("✅ Salvo!"); st.session_state['tela_lancamento'] = False; st.rerun()
+
+    if st.button("🔙 Cancelar", use_container_width=True):
+        st.session_state['tela_lancamento'] = False; st.rerun()
+
+# --- 7. ROTEADOR ---
+if 'aba_atual' not in st.session_state: st.session_state['aba_atual'] = 'Principal'
+if 'tela_lancamento' not in st.session_state: st.session_state['tela_lancamento'] = False
+if 'tela_lote' not in st.session_state: st.session_state['tela_lote'] = False
+
+if st.session_state['tela_lancamento']: tela_lancamento()
+elif st.session_state['tela_lote']: tela_lancar_lote()
+elif st.session_state['aba_atual'] == 'Principal': aba_principal()
+elif st.session_state['aba_atual'] == 'Analitico': aba_analitico()
+elif st.session_state['aba_atual'] == 'Sugestao': aba_sugestoes()
+elif st.session_state['aba_atual'] == 'Editor': aba_editor()
